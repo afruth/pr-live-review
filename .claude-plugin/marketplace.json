@@ -1,0 +1,13 @@
+{
+  "name": "pr-live-review",
+  "owner": {
+    "name": "Andreas Fruth"
+  },
+  "plugins": [
+    {
+      "name": "pr-live-review",
+      "source": "./"
+    }
+  ],
+  "description": "Live PR review pane for Claude Code"
+}
