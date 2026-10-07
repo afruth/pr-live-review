@@ -448,7 +448,8 @@ async function rulesIn($: EngineInterface, root: string, dir: string, seen: Set<
 async function reviewSkill($: EngineInterface, root: string): Promise<string | null> {
   const env = await $.process.run(['sh', '-c', 'printf "%s\\n%s" "$CLAUDE_CONFIG_DIR" "$HOME"'], { cwd: root, timeoutMs: 10000 }).catch(() => null)
   const [configDir, home] = (env?.stdout ?? '').split('\n')
-  const dirs = [`${root}/.claude/skills`, ...(configDir ? [`${configDir}/skills`] : []), ...(home ? [`${home}/.claude/skills`] : [])]
+  const bundled = `${$.plugin.root.replace(/\/\.claude-plugin\/?$/, '')}/skills`
+  const dirs = [`${root}/.claude/skills`, ...(configDir ? [`${configDir}/skills`] : []), ...(home ? [`${home}/.claude/skills`] : []), bundled]
   for (const dir of dirs) {
     const text = await readOrNull($, `${dir}/${REVIEW_SKILL}/SKILL.md`)
     if (text !== null) return stripFrontmatter(text).slice(0, SKILL_LIMIT)

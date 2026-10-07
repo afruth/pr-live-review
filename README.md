@@ -46,9 +46,11 @@ In the comment box, Enter saves or posts. Esc cancels the draft (press it twice 
 - Claude Code 2.1.291 or later.
 - `git` and an authenticated GitHub CLI (`gh`) on the PATH.
 
-## Optional review instructions
+## Review skill
 
-If a skill with the name `review-senior-engineer` exists in `<repo>/.claude/skills/`, `$CLAUDE_CONFIG_DIR/skills/` or `~/.claude/skills/`, the mod adds its `SKILL.md` to the review prompt.
+The plugin ships a skill, `review-senior-engineer`: a strict senior-engineer review that puts logic correctness, query efficiency, type safety and silent failures first. You can also run it by itself as `/pr-live-review:review-senior-engineer`.
+
+The pane adds this skill to the review prompt. To use your own version, put a skill with the same name in `<repo>/.claude/skills/`, `$CLAUDE_CONFIG_DIR/skills/` or `~/.claude/skills/`. The mod uses the first one it finds in that order, and the bundled skill last.
 
 ## Update
 

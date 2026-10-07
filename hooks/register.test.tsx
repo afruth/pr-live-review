@@ -411,6 +411,36 @@ describe('review context', () => {
   })
 })
 
+describe('bundled review skill', () => {
+  test('uses the skill that ships with the plugin when the user has none', async ($, on) => {
+    const clock = mock.clock(on)
+    on('process.run', async (_, e) => {
+      const line = e.argv.join(' ')
+      const stdout = line.startsWith('sh -c') ? '/cfg\n/home' : line.startsWith('git rev-parse --show-toplevel') ? '/repo\n' : (OUTPUT[Object.keys(OUTPUT).find(k => line.startsWith(k)) ?? ''] ?? '')
+      return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    const reads: string[] = []
+    on('fs.read', async (_, e) => {
+      reads.push(e.path)
+      return e.path.endsWith('/skills/review-senior-engineer/SKILL.md') && !/^\/(repo|cfg|home)\//.test(e.path)
+        ? { value: '---\nname: review-senior-engineer\n---\nBundled lens.' }
+        : { deny: 'ENOENT' }
+    })
+    on('fs.stat', async (_, e) => (e.path === '/repo' ? { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false, realPath: e.path } } : { deny: 'ENOENT' }))
+    const systems: string[] = []
+    on('model.complete', async (_, e) => (systems.push(e.system ?? ''), {
+      value: { isAnswered: true, text: '{"summary": "Fine.", "findings": []}', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    }))
+    on('ui.open', async () => ({ value: { isPlaced: true } }))
+    await $.command.run({ command: 'pr-live-review', args: '/repo', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
+    await clock.settle()
+    const skillReads = reads.filter(r => r.endsWith('/review-senior-engineer/SKILL.md'))
+    expect(skillReads.slice(0, 3)).toEqual(['/repo/.claude/skills/review-senior-engineer/SKILL.md', '/cfg/skills/review-senior-engineer/SKILL.md', '/home/.claude/skills/review-senior-engineer/SKILL.md'])
+    expect(skillReads[3]).not.toContain('.claude-plugin')
+    expect(systems[0]).toContain('Bundled lens.')
+  })
+})
+
 describe('look before you ask', () => {
   test('parses look-ups and keeps paths inside the repository', () => {
     expect(parseLook('{"look": [{"read": "src/a.ts", "from": 10, "to": 20}, {"grep": "foo[(]", "glob": "*.ts"}, {"files": "src/**"}, {"bad": 1}]}')).toEqual([
