@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
 
-import { changedSymbols, findDeclaration, parseLines, parseReferences, wordDiff, wordDiffs } from './register'
+import { changedSymbols, findDeclaration, parseLines, parseLook, parseReferences, parseReview, repoPath, wordDiff, wordDiffs } from './register'
 
 const DIFF = [
   'diff --git a/src/app.ts b/src/app.ts',
@@ -161,7 +162,7 @@ describe('pr-live-review', () => {
     })
   }
 
-  test('cycles the findings on one line and keeps the post draft when local HEAD is not the PR head', async ($, on) => {
+  test('cycles the findings, asks about the line, shows why a post failed and cancels the draft', async ($, on) => {
     const clock = mock.clock(on)
     const calls: string[][] = []
     on('process.run', async (_, e) => {
@@ -173,16 +174,19 @@ describe('pr-live-review', () => {
     on('model.complete', async () => ({
       value: { isAnswered: true, text: '{"summary": "Fine.", "findings": [{"severity": "high", "line": "2", "message": "Check b."}, {"severity": "low", "line": "2", "message": "Name b better."}]}', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
     }))
-    on('ui.open', async () => ({ value: { isPlaced: true } }))
+    const opens: { focus?: true; closeOnEscape?: true }[] = []
+    on('ui.open', async (_, e) => (opens.push({ focus: e.focus, closeOnEscape: e.closeOnEscape }), { value: { isPlaced: true } }))
     on('ui.scroll', async () => ({}))
-    const toasts: string[] = []
-    on('ui.toast', async (_, e) => (toasts.push(e.text), { value: undefined }))
+    const fills: string[] = []
+    on('prompt.fill', async (_, e) => (fills.push(e.text), { isFilled: true }))
 
     await $.command.run({ command: 'pr-live-review', args: '/repo', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
     await clock.settle()
     const ui = await $.ui.mount({ plugin: 'pr-live-review', surface: 'terminal', component: 'Pane', requestId: 'pr-live-review', props: PANE })
     await ui.press({ key: 'file:src/app.ts' })
     await ui.press({ key: 'L:3' })
+    await ui.press({ key: 'ask' })
+    expect(fills[0]).toBe('src/app.ts L2 in PR #42:\n```\n+const b = 3\n```\n')
     expect(await ui.find({ type: 'Text', text: /▶ AI ● Check b\./ })).toBeDefined()
     await ui.press({ key: 'card-next' })
     expect(await ui.find({ type: 'Text', text: /▶ AI · Name b better\./ })).toBeDefined()
@@ -192,10 +196,47 @@ describe('pr-live-review', () => {
     await ui.press({ key: 'post' })
     await clock.advance(100)
     expect((await ui.find({ key: 'draft' }))?.props.value).toBe('Name b better.')
+    expect((await ui.find({ type: 'Text', text: /^Name b better\.$/ }))?.props.wrap).toBe('wrap')
+    expect(opens.at(-1)?.closeOnEscape).toBe(true)
     await ui.input({ key: 'draft', text: 'Rename b.' })
     expect(calls.some(a => a[0] === 'gh' && a[1] === 'api')).toBe(false)
-    expect(toasts.some(t => t.includes('Local HEAD is not the PR head'))).toBe(true)
+    expect((await ui.find({ type: 'Text', text: /Local HEAD is not the PR head/ }))?.props.color).toBe('red')
     expect((await ui.find({ key: 'draft' }))?.props.value).toBe('Rename b.')
+    expect((await ui.find({ type: 'Text', text: /^Rename b\.$/ }))?.props.wrap).toBe('wrap')
+
+    await ui.press({ key: 'cancel' })
+    expect(await ui.find({ key: 'draft' })).toBeUndefined()
+    expect(await ui.find({ key: 'edit' })).toBeDefined()
+    expect(opens.at(-1)?.closeOnEscape).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('h and l jump between comments on different lines and wrap around', async ($, on) => {
+    const clock = mock.clock(on)
+    on('process.run', async (_, e) => {
+      const line = e.argv.join(' ')
+      const hit = Object.keys(OUTPUT).find(k => line.startsWith(k))
+      return { value: { exitCode: 0, stdout: hit ? OUTPUT[hit]! : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    on('model.complete', async () => ({
+      value: { isAnswered: true, text: '{"summary": "Fine.", "findings": [{"severity": "high", "line": "1", "message": "Check a."}, {"severity": "low", "line": "2", "message": "Check b."}]}', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    }))
+    on('ui.open', async () => ({ value: { isPlaced: true } }))
+    await $.command.run({ command: 'pr-live-review', args: '/repo', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
+    await clock.settle()
+    const ui = await $.ui.mount({ plugin: 'pr-live-review', surface: 'terminal', component: 'Pane', requestId: 'pr-live-review', props: PANE })
+    await ui.press({ key: 'file:src/app.ts' })
+    await ui.press({ key: 'L:0' })
+    expect(await ui.find({ key: 'card-next', text: /card -\/2/ })).toBeDefined()
+    await ui.press({ key: 'card-next' })
+    expect(await ui.find({ type: 'Text', text: /▶ AI ● Check a\./ })).toBeDefined()
+    await ui.press({ key: 'card-next' })
+    expect(await ui.find({ type: 'Text', text: /▶ AI · Check b\./ })).toBeDefined()
+    expect(await ui.find({ key: 'card-next', text: /card 2\/2/ })).toBeDefined()
+    await ui.press({ key: 'card-next' })
+    expect(await ui.find({ type: 'Text', text: /▶ AI ● Check a\./ })).toBeDefined()
+    await ui.press({ key: 'card-prev' })
+    expect(await ui.find({ type: 'Text', text: /▶ AI · Check b\./ })).toBeDefined()
     await ui.unmount()
   })
 
@@ -367,5 +408,123 @@ describe('review context', () => {
     expect(app.prompt).toContain('The full new file:')
     expect(app.prompt).toContain('const b = 3')
     expect(readme.prompt).not.toContain('No barrel files in src.')
+  })
+})
+
+describe('look before you ask', () => {
+  test('parses look-ups and keeps paths inside the repository', () => {
+    expect(parseLook('{"look": [{"read": "src/a.ts", "from": 10, "to": 20}, {"grep": "foo[(]", "glob": "*.ts"}, {"files": "src/**"}, {"bad": 1}]}')).toEqual([
+      { read: 'src/a.ts', from: 10, to: 20 },
+      { grep: 'foo[(]', glob: '*.ts' },
+      { files: 'src/**' },
+    ])
+    expect(parseLook('{"summary": "Fine.", "findings": []}')).toBeNull()
+    expect(parseLook('{"look": [{"grep": "a", "glob": "x/*"}]}\n```\n\n{"look": [{"grep": "a", "glob": "x/**"}]}')).toEqual([
+      { grep: 'a', glob: 'x/*' },
+      { grep: 'a', glob: 'x/**' },
+    ])
+    expect(parseLook('```json\n{"look": [{"read": "a {b} \\"c\\".ts"}]}\n```')).toEqual([{ read: 'a {b} "c".ts' }])
+    expect(parseReview('Thinking.\n{"look": []}\n{"summary": "Fine.", "findings": [{"severity": "high", "line": "2", "message": "Bad."}]}', 'a.ts').findings.length).toBe(1)
+    expect(parseLook('not json')).toBeNull()
+    expect(repoPath('/repo', 'src/a.ts')).toBe('/repo/src/a.ts')
+    expect(repoPath('/repo', '/repo/src/a.ts')).toBe('/repo/src/a.ts')
+    expect(repoPath('/repo', '../etc/passwd')).toBeNull()
+    expect(repoPath('/repo', '/etc/passwd')).toBeNull()
+  })
+
+  const setup = (on: On, replies: (prompt: string, n: number) => string) => {
+    const clock = mock.clock(on)
+    const runs: string[] = []
+    const stdout: Record<string, string> = {
+      ...OUTPUT,
+      'git rev-parse --show-toplevel': '/repo\n',
+      'git grep': 'server/api/b.ts:7:  validateB(input)\n',
+      'git ls-files -- none/**': '',
+      'git ls-files': 'server/api/b.ts\nserver/helpers/b.ts\n',
+    }
+    on('process.run', async (_, e) => {
+      const line = e.argv.join(' ')
+      runs.push(line)
+      const hit = Object.keys(stdout).find(k => line.startsWith(k))
+      return { value: { exitCode: 0, stdout: hit ? stdout[hit]! : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    const disk: Record<string, string> = {
+      '/repo/src/app.ts': 'const a = 1\nconst b = 3\n',
+      '/repo/server/api/b.ts': Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n'),
+    }
+    on('fs.read', async (_, e) => (e.path in disk ? { value: disk[e.path]! } : { deny: 'ENOENT' }))
+    on('fs.stat', async (_, e) =>
+      e.path === '/repo/link.ts'
+        ? { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: true, realPath: '/outside/secret.md' } }
+        : e.path === '/repo' || e.path in disk
+          ? { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false, realPath: e.path } }
+          : { deny: 'ENOENT' },
+    )
+    const prompts: string[] = []
+    on('model.complete', async (_, e) => {
+      prompts.push(e.prompt)
+      const text = e.prompt.includes('File: README.md') ? '{"summary": "Docs.", "findings": []}' : replies(e.prompt, prompts.filter(p => p.includes('File: src/app.ts')).length)
+      return { value: { isAnswered: true, text, usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }
+    })
+    on('ui.open', async () => ({ value: { isPlaced: true } }))
+    return { clock, runs, prompts }
+  }
+
+  test('runs the look-ups and gives the results back before the findings', async ($, on) => {
+    const { clock, runs, prompts } = setup(on, (_, n) =>
+      n === 1
+        ? '{"look": [{"read": "server/api/b.ts", "from": 6, "to": 8}, {"grep": "validateB", "glob": "*.ts"}, {"files": "server/**/b.ts"}, {"files": "none/**"}, {"read": "../secrets.yaml"}, {"read": "link.ts"}]}'
+        : '{"summary": "Changes b.", "findings": [{"severity": "high", "line": "2", "message": "server/api/b.ts:7 validates b before it reaches here, but not for 3."}]}',
+    )
+    await $.command.run({ command: 'pr-live-review', args: '/repo', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
+    await clock.settle()
+
+    const app = prompts.filter(p => p.includes('File: src/app.ts'))
+    expect(app.length).toBe(2)
+    expect(app[0]).not.toContain('Round 1')
+    expect(app[1]).toContain('Round 1, you asked:')
+    expect(app[1]).toContain('read server/api/b.ts lines 6-8 of 10:\n    6| line 6\n    7| line 7\n    8| line 8')
+    expect(app[1]).toContain('grep "validateB" in *.ts: 1 line:\nserver/api/b.ts:7:  validateB(input)')
+    expect(app[1]).toContain('files server/**/b.ts: 2 lines:')
+    expect(app[1]).toContain('read ../secrets.yaml: refused')
+    expect(app[1]).toContain('files none/**: no match.')
+    expect(app[1]).toContain('read link.ts: no such file inside the repository.')
+    expect(runs).toContain('git grep -n -I -E -e validateB -- *.ts')
+    expect(runs).toContain('git ls-files -- server/**/b.ts')
+
+    const ui = await $.ui.mount({ plugin: 'pr-live-review', surface: 'terminal', component: 'Pane', requestId: 'pr-live-review', props: PANE })
+    await ui.press({ key: 'file:src/app.ts' })
+    expect(await ui.find({ type: 'Text', text: /⌕6/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /validates b before it reaches here/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('asks again when a reply has no JSON', async ($, on) => {
+    const { clock, prompts } = setup(on, (_, n) => (n === 1 ? 'Let me check the callers first.' : '{"summary": "Fine.", "findings": []}'))
+    await $.command.run({ command: 'pr-live-review', args: '/repo', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
+    await clock.settle()
+    const app = prompts.filter(p => p.includes('File: src/app.ts'))
+    expect(app.length).toBe(2)
+    expect(app[1]).toContain('your reply had no JSON object that could be read')
+    const ui = await $.ui.mount({ plugin: 'pr-live-review', surface: 'terminal', component: 'Pane', requestId: 'pr-live-review', props: PANE })
+    await ui.press({ key: 'file:src/app.ts' })
+    expect(await ui.find({ type: 'Text', text: /^Fine\.$/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('stops after the last round and asks for the findings', async ($, on) => {
+    const { clock, prompts } = setup(on, prompt =>
+      prompt.includes('No more look-ups are possible') ? '{"look": [{"grep": "still b"}]}' : '{"look": [{"grep": "b"}]}',
+    )
+    await $.command.run({ command: 'pr-live-review', args: '/repo', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
+    await clock.settle()
+
+    const app = prompts.filter(p => p.includes('File: src/app.ts'))
+    expect(app.length).toBe(8)
+    expect(app[7]).toContain('Round 7, you asked:')
+    expect(app[7]).toContain('No more look-ups are possible')
+    const ui = await $.ui.mount({ plugin: 'pr-live-review', surface: 'terminal', component: 'Pane', requestId: 'pr-live-review', props: PANE })
+    expect(await ui.find({ type: 'Text', text: /the reviewer did not stop looking/ })).toBeDefined()
+    await ui.unmount()
   })
 })

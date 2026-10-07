@@ -1,6 +1,6 @@
 {
   "name": "pr-live-review",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Live PR review pane: diff against the base branch, file summaries, and line comments sent to Claude",
   "types": "./types/index.d.ts",
   "author": {

@@ -22,6 +22,7 @@ export type FileReview = {
   summary: string
   findings: Finding[]
   callSites?: number
+  looked?: number
 }
 
 export type PrFile = {
@@ -44,7 +45,7 @@ export type ReviewComment = {
   findingId: string | null
 }
 
-export type Draft = { path: string; start: number; end: number; text: string; findingId: string | null; mode: 'comment' | 'post'; editId: string | null }
+export type Draft = { path: string; start: number; end: number; text: string; findingId: string | null; mode: 'comment' | 'post'; editId: string | null; error?: string }
 
 declare module 'claude-code' {
   interface PluginState {
