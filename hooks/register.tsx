@@ -524,9 +524,12 @@ async function runLook($: EngineInterface, root: string, realRoot: string, look:
   if ('read' in look) {
     const path = repoPath(root, look.read)
     if (path === null) return `read ${look.read}: refused, the path must be inside the repository.`
-    const tracked = await $.process.run(['git', 'ls-files', '--error-unmatch', '--', `:(literal)${path.slice(root.length + 1)}`], { cwd: root, timeoutMs: 30000 }).catch(() => null)
+    const real = await realPathOf($, path)
+    if (real === undefined || !real.startsWith(`${realRoot}/`)) return `read ${look.read}: no such file inside the repository.`
+    // A tracked symlink can point at an ignored file, so the resolved target is what git must track.
+    const tracked = await $.process.run(['git', 'ls-files', '--error-unmatch', '--', `:(literal)${real.slice(realRoot.length + 1)}`], { cwd: realRoot, timeoutMs: 30000 }).catch(() => null)
     if (tracked?.exitCode !== 0) return `read ${look.read}: refused, git does not track this file.`
-    const text = await readInside($, realRoot, path)
+    const text = await readOrNull($, real)
     if (text === null) return `read ${look.read}: no such file inside the repository.`
     const all = text.split('\n')
     const from = Math.max(1, Math.floor(look.from ?? 1))

@@ -491,6 +491,8 @@ describe('look before you ask', () => {
     on('fs.stat', async (_, e) =>
       e.path === '/repo/link.ts'
         ? { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: true, realPath: '/outside/secret.md' } }
+        : e.path === '/repo/notes.txt'
+          ? { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: true, realPath: '/repo/.env' } }
         : e.path === '/repo' || e.path in disk
           ? { value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false, realPath: e.path } }
           : { deny: 'ENOENT' },
@@ -510,7 +512,7 @@ describe('look before you ask', () => {
       n === 1
         ? '{"look": [{"read": "server/api/b.ts", "from": 6, "to": 8}, {"grep": "validateB", "glob": "*.ts"}, {"files": "server/**/b.ts"}, {"read": "../secrets.yaml"}, {"read": "link.ts"}]}'
         : n === 2
-          ? '{"look": [{"read": ".env"}, {"files": "none/**"}]}'
+          ? '{"look": [{"read": ".env"}, {"files": "none/**"}, {"read": "notes.txt"}]}'
           : '{"summary": "Changes b.", "findings": [{"severity": "high", "line": "2", "message": "server/api/b.ts:7 validates b before it reaches here, but not for 3."}]}',
     )
     await $.command.run({ command: 'pr-live-review', args: '/repo', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
@@ -527,6 +529,7 @@ describe('look before you ask', () => {
     expect(app[2]).toContain('files none/**: no match.')
     expect(app[1]).toContain('read link.ts: no such file inside the repository.')
     expect(app[2]).toContain('read .env: refused, git does not track this file.')
+    expect(app[2]).toContain('read notes.txt: refused, git does not track this file.')
     expect(app[2]).not.toContain('API_KEY=secret')
     expect(runs).toContain('git ls-files --error-unmatch -- :(literal)server/api/b.ts')
     expect(runs).toContain('git grep -n -I -E -e validateB -- *.ts')
@@ -534,7 +537,7 @@ describe('look before you ask', () => {
 
     const ui = await $.ui.mount({ plugin: 'pr-live-review', surface: 'terminal', component: 'Pane', requestId: 'pr-live-review', props: PANE })
     await ui.press({ key: 'file:src/app.ts' })
-    expect(await ui.find({ type: 'Text', text: /⌕7/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /⌕8/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /validates b before it reaches here/ })).toBeDefined()
     await ui.unmount()
   })
