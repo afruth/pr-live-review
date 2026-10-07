@@ -475,11 +475,16 @@ describe('look before you ask', () => {
     on('process.run', async (_, e) => {
       const line = e.argv.join(' ')
       runs.push(line)
+      if (line.startsWith('git ls-files --error-unmatch')) {
+        const isTracked = !line.endsWith('.env')
+        return { value: { exitCode: isTracked ? 0 : 1, stdout: '', stderr: isTracked ? '' : 'error: pathspec did not match', isStdoutTruncated: false, isStderrTruncated: false } }
+      }
       const hit = Object.keys(stdout).find(k => line.startsWith(k))
       return { value: { exitCode: 0, stdout: hit ? stdout[hit]! : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     })
     const disk: Record<string, string> = {
       '/repo/src/app.ts': 'const a = 1\nconst b = 3\n',
+      '/repo/.env': 'API_KEY=secret',
       '/repo/server/api/b.ts': Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n'),
     }
     on('fs.read', async (_, e) => (e.path in disk ? { value: disk[e.path]! } : { deny: 'ENOENT' }))
@@ -503,28 +508,33 @@ describe('look before you ask', () => {
   test('runs the look-ups and gives the results back before the findings', async ($, on) => {
     const { clock, runs, prompts } = setup(on, (_, n) =>
       n === 1
-        ? '{"look": [{"read": "server/api/b.ts", "from": 6, "to": 8}, {"grep": "validateB", "glob": "*.ts"}, {"files": "server/**/b.ts"}, {"files": "none/**"}, {"read": "../secrets.yaml"}, {"read": "link.ts"}]}'
-        : '{"summary": "Changes b.", "findings": [{"severity": "high", "line": "2", "message": "server/api/b.ts:7 validates b before it reaches here, but not for 3."}]}',
+        ? '{"look": [{"read": "server/api/b.ts", "from": 6, "to": 8}, {"grep": "validateB", "glob": "*.ts"}, {"files": "server/**/b.ts"}, {"read": "../secrets.yaml"}, {"read": "link.ts"}]}'
+        : n === 2
+          ? '{"look": [{"read": ".env"}, {"files": "none/**"}]}'
+          : '{"summary": "Changes b.", "findings": [{"severity": "high", "line": "2", "message": "server/api/b.ts:7 validates b before it reaches here, but not for 3."}]}',
     )
     await $.command.run({ command: 'pr-live-review', args: '/repo', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
     await clock.settle()
 
     const app = prompts.filter(p => p.includes('File: src/app.ts'))
-    expect(app.length).toBe(2)
+    expect(app.length).toBe(3)
     expect(app[0]).not.toContain('Round 1')
     expect(app[1]).toContain('Round 1, you asked:')
     expect(app[1]).toContain('read server/api/b.ts lines 6-8 of 10:\n    6| line 6\n    7| line 7\n    8| line 8')
     expect(app[1]).toContain('grep "validateB" in *.ts: 1 line:\nserver/api/b.ts:7:  validateB(input)')
     expect(app[1]).toContain('files server/**/b.ts: 2 lines:')
     expect(app[1]).toContain('read ../secrets.yaml: refused')
-    expect(app[1]).toContain('files none/**: no match.')
+    expect(app[2]).toContain('files none/**: no match.')
     expect(app[1]).toContain('read link.ts: no such file inside the repository.')
+    expect(app[2]).toContain('read .env: refused, git does not track this file.')
+    expect(app[2]).not.toContain('API_KEY=secret')
+    expect(runs).toContain('git ls-files --error-unmatch -- :(literal)server/api/b.ts')
     expect(runs).toContain('git grep -n -I -E -e validateB -- *.ts')
     expect(runs).toContain('git ls-files -- server/**/b.ts')
 
     const ui = await $.ui.mount({ plugin: 'pr-live-review', surface: 'terminal', component: 'Pane', requestId: 'pr-live-review', props: PANE })
     await ui.press({ key: 'file:src/app.ts' })
-    expect(await ui.find({ type: 'Text', text: /⌕6/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /⌕7/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /validates b before it reaches here/ })).toBeDefined()
     await ui.unmount()
   })

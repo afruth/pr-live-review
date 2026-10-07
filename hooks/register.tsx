@@ -390,7 +390,7 @@ const REVIEW_SYSTEM = [
   'Ask a question only about intent or facts that the code cannot show, such as a product decision.',
   'To look, reply with JSON only, in this shape, and nothing else:',
   '{"look": [{"read": "path/from/repo/root.ts", "from": 1, "to": 200}, {"grep": "extended regex", "glob": "*.ts"}, {"files": "glob"}]}',
-  `read gives numbered lines of one file (default lines 1-${READ_DEFAULT_LINES}). grep runs git grep -n -E over the tracked files; glob is optional and limits the paths. files lists tracked paths that match the glob.`,
+  `read gives numbered lines of one file that git tracks (default lines 1-${READ_DEFAULT_LINES}). grep runs git grep -n -E over the tracked files; glob is optional and limits the paths. files lists tracked paths that match the glob.`,
   `Ask for up to ${MAX_LOOKS_PER_ROUND} look-ups in one reply. You get at most ${MAX_ROUNDS - 1} rounds of look-ups; the results come back in the next prompt. Look at the places that decide your findings, not at everything.`,
   'When you have what you need, reply with the summary and findings JSON. Do not mix "look" and "findings" in one reply.',
 ].join('\n')
@@ -524,6 +524,8 @@ async function runLook($: EngineInterface, root: string, realRoot: string, look:
   if ('read' in look) {
     const path = repoPath(root, look.read)
     if (path === null) return `read ${look.read}: refused, the path must be inside the repository.`
+    const tracked = await $.process.run(['git', 'ls-files', '--error-unmatch', '--', `:(literal)${path.slice(root.length + 1)}`], { cwd: root, timeoutMs: 30000 }).catch(() => null)
+    if (tracked?.exitCode !== 0) return `read ${look.read}: refused, git does not track this file.`
     const text = await readInside($, realRoot, path)
     if (text === null) return `read ${look.read}: no such file inside the repository.`
     const all = text.split('\n')

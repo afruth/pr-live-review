@@ -19,7 +19,7 @@ Answer `y` to add the marketplace. Then select a scope (the user scope is the de
 
 ## How the review works
 
-The reviewer gets the diff, the full changed file, call sites from the language server and the repository rules (`CLAUDE.md`, `AGENTS.md`). Before it writes a finding that depends on code outside the diff, it can read files, search with `git grep` and list files with `git ls-files`. It reads only files inside the repository. It can do up to 7 rounds of look-ups for each file. A `⌕N` badge on a file shows how many look-ups it made.
+The reviewer gets the diff, the full changed file, call sites from the language server and the repository rules (`CLAUDE.md`, `AGENTS.md`). Before it writes a finding that depends on code outside the diff, it can read files, search with `git grep` and list files with `git ls-files`. It reads only files that git tracks, so ignored files such as `.env` stay out of the prompt. It can do up to 7 rounds of look-ups for each file. A `⌕N` badge on a file shows how many look-ups it made.
 
 Each round sends the full prompt again, so a file with many rounds costs more tokens than one model call.
 
